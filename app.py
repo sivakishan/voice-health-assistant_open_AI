@@ -2,6 +2,9 @@ import streamlit as st
 import time
 import os
 import requests
+from PIL import Image
+import openai
+import base64
 from speech_utils import listen_to_voice, speak
 from gpt_engine import ask_gpt
 from excel_lookup import get_medicine_for_symptom
@@ -18,7 +21,7 @@ last_speech_time = time.time()
 TIMEOUT = 180  # 3 minutes
 
 load_dotenv()
-
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 def get_nearby_medical_stores(api_key, location="pharmacy", latitude="17.385044", longitude="78.486671"):
     url = (
@@ -37,6 +40,29 @@ def get_nearby_medical_stores(api_key, location="pharmacy", latitude="17.385044"
                 phone = "+46" + phone[1:]
             stores.append({"name": name, "address": address, "number": phone})
     return stores
+
+def describe_medicine_image(image_file):
+    image = Image.open(image_file)
+    response = openai.ChatCompletion.create(
+        model="gpt-4-vision-preview",
+        messages=[
+            {"role": "system", "content": "You are a helpful medical assistant. Describe what the medicine is and what it is used for."},
+            {"role": "user", "content": [
+                {"type": "text", "text": "What is this medicine used for?"},
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(image_file.getvalue()).decode('utf-8')}}
+            ]}
+        ],
+        max_tokens=300
+    )
+    return response.choices[0].message['content']
+
+uploaded_file = st.file_uploader("Upload a photo of a medicine to identify it", type=["jpg", "png", "jpeg"])
+if uploaded_file is not None:
+    st.image(uploaded_file, caption="Uploaded Medicine Image", use_column_width=True)
+    with st.spinner("Analyzing the medicine..."):
+        result = describe_medicine_image(uploaded_file)
+        st.success(result)
+        speak(result)
 
 if st.button("🎹 Start Talking"):
     st.write("Speak now. Say 'stop' to end the session.")
@@ -75,6 +101,12 @@ if st.button("🎹 Start Talking"):
         if "medical store" in query.lower() or "pharmacy" in query.lower():
             api_key = os.getenv("GOOGLE_MAPS_API_KEY")
             stores = get_nearby_medical_stores(api_key)
+            if stores:
+                speak(f"I found {len(stores)} pharmacies nearby.")
+                for store in stores:
+                    speak(f"{store['name']} located at {store['address']}.")
+            else:
+                speak("Sorry, I could not find any nearby pharmacies.")
             store_url = "https://www.google.com/maps/search/pharmacy+near+me/"
             st.markdown(f"[📍 Nearby Pharmacies]({store_url})")
             speak("I found nearby pharmacies. Do you want me to call one?")
